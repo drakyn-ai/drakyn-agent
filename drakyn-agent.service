@@ -1,0 +1,25 @@
+[Unit]
+Description=Drakyn Agent - AI Assistant Service
+After=network.target
+
+[Service]
+Type=simple
+User=cnguyen
+Group=cnguyen
+WorkingDirectory=/home/cnguyen/drakyn-agent
+Environment="PATH=/home/cnguyen/drakyn-agent/venv/bin"
+ExecStart=/home/cnguyen/drakyn-agent/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=10
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=drakyn-agent
+
+[Install]
+WantedBy=multi-user.target

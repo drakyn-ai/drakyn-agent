@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drakyn Agent - Chat</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="chat-page">
+    <div class="chat-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>Conversations</h2>
+                <button id="new-chat-btn" class="btn-primary">+ New Chat</button>
+            </div>
+            <div id="conversations-list" class="conversations-list">
+                <!-- Conversations will be loaded here -->
+            </div>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <span>{{ user.name }}</span>
+                    <a href="/logout" class="logout-link">Logout</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat area -->
+        <div class="chat-area">
+            <div class="chat-header">
+                <h3 id="chat-title">Drakyn Agent</h3>
+            </div>
+            <div id="messages-container" class="messages-container">
+                <div class="welcome-message">
+                    <h2>Welcome to Drakyn Agent</h2>
+                    <p>Start a new conversation or select an existing one from the sidebar.</p>
+                </div>
+            </div>
+            <div class="input-area">
+                <form id="message-form">
+                    <textarea
+                        id="message-input"
+                        placeholder="Type your message here..."
+                        rows="3"
+                        disabled
+                    ></textarea>
+                    <button type="submit" id="send-btn" class="btn-send" disabled>Send</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/chat.js"></script>
+</body>
+</html>
