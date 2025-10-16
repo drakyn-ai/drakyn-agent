@@ -33,6 +33,19 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS oauth_tokens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_email TEXT NOT NULL UNIQUE,
+                access_token TEXT NOT NULL,
+                refresh_token TEXT,
+                token_type TEXT,
+                expires_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         await db.commit()
 
 async def create_conversation(user_email: str, title: str = "New Conversation") -> int:
@@ -93,3 +106,35 @@ async def delete_conversation(conversation_id: int, user_email: str):
             await db.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
             await db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
             await db.commit()
+
+async def store_oauth_token(user_email: str, token_data: Dict):
+    """Store or update OAuth token for a user."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            INSERT INTO oauth_tokens (user_email, access_token, refresh_token, token_type, expires_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_email) DO UPDATE SET
+                access_token = excluded.access_token,
+                refresh_token = COALESCE(excluded.refresh_token, refresh_token),
+                token_type = excluded.token_type,
+                expires_at = excluded.expires_at,
+                updated_at = CURRENT_TIMESTAMP
+        """, (
+            user_email,
+            token_data.get('access_token'),
+            token_data.get('refresh_token'),
+            token_data.get('token_type'),
+            token_data.get('expires_at')
+        ))
+        await db.commit()
+
+async def get_oauth_token(user_email: str) -> Optional[Dict]:
+    """Get stored OAuth token for a user."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT access_token, refresh_token, token_type, expires_at FROM oauth_tokens WHERE user_email = ?",
+            (user_email,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None

@@ -6,12 +6,17 @@ from fastapi.templating import Jinja2Templates
 from authlib.integrations.starlette_client import OAuth
 from starlette.middleware.sessions import SessionMiddleware
 import json
+import logging
 from datetime import timedelta
 
 import app.config as config
 import app.database as db
 import app.auth as auth
 from app.claude_client import stream_claude_response
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(title="Drakyn Agent")
@@ -30,7 +35,11 @@ oauth.register(
     client_id=config.GOOGLE_CLIENT_ID,
     client_secret=config.GOOGLE_CLIENT_SECRET,
     server_metadata_url=config.GOOGLE_DISCOVERY_URL,
-    client_kwargs={'scope': 'openid email profile'}
+    client_kwargs={
+        'scope': 'openid email profile https://www.googleapis.com/auth/gmail.readonly',
+        'access_type': 'offline',  # Request refresh token
+        'prompt': 'consent'  # Force consent screen to get refresh token
+    }
 )
 
 @app.on_event("startup")
@@ -72,6 +81,16 @@ async def auth_callback(request: Request):
                 status_code=403
             )
 
+        # Store OAuth token for Gmail API access
+        token_data = {
+            'access_token': token.get('access_token'),
+            'refresh_token': token.get('refresh_token'),
+            'token_type': token.get('token_type'),
+            'expires_at': token.get('expires_at')
+        }
+        await db.store_oauth_token(email, token_data)
+        logger.info(f"Stored OAuth token for user: {email}")
+
         # Create access token
         access_token = auth.create_access_token(
             data={"email": email, "name": name},
@@ -80,10 +99,20 @@ async def auth_callback(request: Request):
 
         # Redirect to chat with token in cookie
         response = RedirectResponse(url="/chat")
+        # HttpOnly cookie for regular auth (can't be read by JS)
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=7 * 24 * 60 * 60  # 7 days
+        )
+        # Non-HttpOnly cookie for WebSocket auth (can be read by JS)
+        response.set_cookie(
+            key="ws_token",
+            value=access_token,
+            httponly=False,  # JavaScript needs to read this
             secure=True,
             samesite="lax",
             max_age=7 * 24 * 60 * 60  # 7 days
@@ -98,6 +127,7 @@ async def logout():
     """Logout user."""
     response = RedirectResponse(url="/")
     response.delete_cookie("access_token")
+    response.delete_cookie("ws_token")
     return response
 
 @app.get("/chat", response_class=HTMLResponse)
@@ -144,20 +174,25 @@ async def get_conversation(conversation_id: int, request: Request):
 async def websocket_chat(websocket: WebSocket, conversation_id: int):
     """WebSocket endpoint for real-time chat."""
     await websocket.accept()
+    logger.info(f"WebSocket connection accepted for conversation {conversation_id}")
 
     try:
         # Get user from initial message (client sends token)
         initial_data = await websocket.receive_json()
         token = initial_data.get("token")
+        logger.info(f"Received initial data, token present: {token is not None}")
 
         if not token:
+            logger.error("No token provided in WebSocket connection")
             await websocket.close(code=1008)
             return
 
         try:
             user_payload = auth.verify_token(token)
             user_email = user_payload.get("email")
-        except:
+            logger.info(f"Token verified for user: {user_email}")
+        except Exception as e:
+            logger.error(f"Token verification failed: {e}")
             await websocket.close(code=1008)
             return
 
@@ -170,6 +205,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             # Receive message from user
             data = await websocket.receive_json()
             user_message = data.get("message")
+            selected_model = data.get("model", "claude-sonnet-4-5-20250929")  # Default to latest Sonnet
 
             if not user_message:
                 continue
@@ -185,7 +221,7 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             assistant_response = ""
             await websocket.send_json({"type": "start"})
 
-            async for chunk in stream_claude_response(messages):
+            async for chunk in stream_claude_response(messages, model=selected_model, user_email=user_email):
                 assistant_response += chunk
                 await websocket.send_json({"type": "chunk", "content": chunk})
 
@@ -196,10 +232,13 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             messages.append({"role": "assistant", "content": assistant_response})
 
     except WebSocketDisconnect:
-        pass
+        logger.info("WebSocket disconnected")
     except Exception as e:
-        print(f"WebSocket error: {e}")
-        await websocket.close(code=1011)
+        logger.error(f"WebSocket error: {e}", exc_info=True)
+        try:
+            await websocket.close(code=1011)
+        except:
+            pass
 
 @app.get("/health")
 async def health_check():
